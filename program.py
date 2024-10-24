@@ -12,7 +12,9 @@ from obd.utils import bytes_to_int
 
 print("Started program")
 
-from config import debug_mode, metrics_file
+from config import debug_mode, metrics_file, day_mode, night_mode, button1, button2
+
+from gpiozero import Button
 
 import RGB1602
 lcd=RGB1602.RGB1602(16,2)
@@ -36,7 +38,7 @@ smiley_face = [
     0b00000   # Row 8 (empty row)
 ]
 
-degrees = [
+degrees = [ #degrees icon does not render correctly on the display.
     0b01110,
     0b10001,
     0b10001,
@@ -47,56 +49,65 @@ degrees = [
     0b00000
 ]
 
-lcd.load_custom_char(0, blank)
+lcd.load_custom_char(0, blank) #load custom characters into memory positions in CGRAM of the display. There are 8 positions (0-7)
 lcd.load_custom_char(1, smiley_face)
 lcd.load_custom_char(2, degrees)
 
+
 connected = False
-connection = obd.Async()
-while not connected:
-    connection = obd.Async() #setup async connection
+connection = None
 
-    lcd.setCursor(0, 0)
+def connect():
+    while not connected:
+        connection = obd.Async() #setup async connection
 
-    if(connection.status() == obd.OBDStatus.NOT_CONNECTED):
-        lcd.setRGB(255,0,0);
-        lcd.printout("No car found!   ")
-        lcd.setCursor(0, 1)
-        lcd.printout("No reader.      ")
-        
-        if tick:
-            lcd.setCursor(15,1)
-            lcd.write(0)
-            tick = False
-        else:
-            lcd.setCursor(15,1)
-            lcd.write(1)
-            tick = True
+        lcd.setCursor(0, 0)
 
-    elif(connection.status() == obd.OBDStatus.ELM_CONNECTED):
-        lcd.setRGB(255,0,0);
-        lcd.printout("No car found!   ")
-        lcd.setCursor(0, 1)
-        lcd.printout("Found reader    ")
+        if(connection.status() == obd.OBDStatus.NOT_CONNECTED):
+            lcd.setRGB(255,0,0);
+            lcd.printout("No car found!   ")
+            lcd.setCursor(0, 1)
+            lcd.printout("No reader.      ")
 
-        if tick:
-            lcd.setCursor(15,1)
-            lcd.write(0)
-            tick = False
-        else:
-            lcd.setCursor(15,1)
-            lcd.write(1)
-            tick = True
+            #show program is running by updating one character on the display
+            
+            if tick:
+                lcd.setCursor(15,1)
+                lcd.write(0) #display character in CGMRAM position 0 (blank)
+                tick = False
+            else:
+                lcd.setCursor(15,1)
+                lcd.write(1) #display character in CGMRAM position 1 (smiley face)
+                tick = True
 
-    elif(connection.status() == obd.OBDStatus.OBD_CONNECTED or connection.status() == obd.OBDStatus.CAR_CONNECTED):
-        lcd.setRGB(0, 255, 0);
-        lcd.printout("Found car!      ")
-        lcd.setCursor(0, 1)
-        lcd.printout("Initialising.   ")
+        elif(connection.status() == obd.OBDStatus.ELM_CONNECTED):
+            lcd.setRGB(255,0,0);
+            lcd.printout("No car found!   ")
+            lcd.setCursor(0, 1)
+            lcd.printout("Found reader    ")
 
-        connected = True
+            #show program is running by updating one character on the display
 
-    time.sleep(0.5)
+            if tick:
+                lcd.setCursor(15,1)
+                lcd.write(0) #display character in CGMRAM position 0 (blank)
+                tick = False
+            else:
+                lcd.setCursor(15,1)
+                lcd.write(1) #display character in CGMRAM position 1 (smiley face)
+                tick = True
+
+        elif(connection.status() == obd.OBDStatus.OBD_CONNECTED or connection.status() == obd.OBDStatus.CAR_CONNECTED):
+            lcd.setRGB(0, 255, 0);
+            lcd.printout("Found car!      ")
+            lcd.setCursor(0, 1)
+            lcd.printout("Initialising.   ")
+
+            connected = True
+
+        time.sleep(0.5)
+
+    return True
 
 lcd.clear()
 
@@ -111,27 +122,28 @@ class Metric():
         global connection
         for command in self.commands:
             connection.watch(command)
+        return True
 
     def getValue(self):
         global connection
         values = []
         for command in self.commands:
             response = connection.query(command) # subscribe to each metric we need from the car
-            if response.is_null(): #if the car dosen't support it, set it to 0 so the true value is always 0.
+            if response.is_null(): #if the car dosen't support it, set it to 0 so the true value is always 0, indicating a problem.
                 values.append(0)
             else:
                 values.append(response.value.magnitude)
 
-        if self.calculation_function:
+        if self.calculation_function is not None:
             return self.calculation_function(values)
         else:
             return values[0]
 
     def printValue(self):
-        str(self.getValue()) + self.unit
+        return str(self.getValue()) + self.unit
 
 def kph_to_mph(values):
-    return values[0] / 1.609344
+    return float(values[0]) / 1.609344
 
 def to_torque(messages):
     """ decoder for Torque messages """
@@ -143,8 +155,8 @@ def to_torque(messages):
 torque_command = obd.OBDCommand("Torque", "Engine Torque", b"0163", 2, to_torque)
 
 def calc_power(values):
-    rpm = values[0]
-    torque = values[1]
+    rpm = float(values[0])
+    torque = float(values[1])
     return (rpm * torque) / 5252
 
 metrics = {
@@ -167,9 +179,10 @@ for file_metric in file_metrics: # for each monitored metric in the file
     metrics[file_metric].setup()
     active_metrics.append(metrics[file_metric]) # add it to current monitored metrics
 
-connection.start()
+connection.start() # connect to the car
+lcd.setColor(daymode[0], day_mode[1], day_mode[2])
 
-def printout_custom_char(lcd, string, row):
+def printout_custom_char(lcd, string, row): # will use CGRAM to print stored values that the display cannot display properly on its own.
     instructions = []
     params = []
 
@@ -204,18 +217,31 @@ def printout_custom_char(lcd, string, row):
 
         count = count + 1
 
+active_night_mode = False
+
 while True:
+    if not connection.running():
+        connect() # connect if it fails
+
+    if active_night_mode == True:
+        lcd.setColor(night_mode[0], night_mode[1], night_mode[2])
+    else:
+        lcd.setColor(day_mode[0], day_mode[1], day_mode[2])
+
     metric1 = active_metrics[0]
-    metric1 = active_metrics[1]
-    metric1 = active_metrics[2]
-    metric1 = active_metrics[3]
+    metric2 = active_metrics[1]
+    metric3 = active_metrics[2]
+    metric4 = active_metrics[3]
 
-    metric1
+    value1 = metric1.printValue()
+    value2 = metric1.printValue()
+    value3 = metric1.printValue()
+    value4 = metric1.printValue()
 
-    value1 = "90°C"
-    value2 = "987rpm"
-    value3 = "5.1L/h"
-    value4 = "56HP"
+    # value1 = "90°C"
+    # value2 = "987rpm"
+    # value3 = "5.1L/h"
+    # value4 = "56HP"
 
     value1_length = len(value1)
     value2_length = len(value2)
@@ -227,6 +253,8 @@ while True:
 
     blank_space_row1 = " " * (lcd.width - (value4_length + value3_length))
     printout_custom_char(lcd, value3 + blank_space_row0 + value4, 1)
+
+
 
     # blank_space_row0 = " " * (lcd.width - (value2_length + value1_length))
     # lcd.setCursor(0,0)

@@ -10,5 +10,6 @@ version_file = os.path.join(dir_path, "version.txt")
 
 button1 = 17
 button2 = 27
-button3 = 22
-button4 = 23
+
+night_mode = (128, 128, 128)
+day_mode = (255, 255, 255)
